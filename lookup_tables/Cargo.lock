@@ -699,8 +699,8 @@ dependencies = [
  "base64 0.13.1",
  "bincode",
  "chrono",
- "clockwork-thread-program 2.0.17",
- "clockwork-utils 2.0.17 (registry+https://github.com/rust-lang/crates.io-index)",
+ "clockwork-thread-program 2.0.15",
+ "clockwork-utils 2.0.17",
  "lookup-tables",
  "reqwest",
  "serde_json",
@@ -760,7 +760,7 @@ dependencies = [
 
 [[package]]
 name = "clockwork-cron"
-version = "2.0.17"
+version = "2.0.15"
 dependencies = [
  "chrono",
  "nom",
@@ -780,12 +780,11 @@ dependencies = [
 
 [[package]]
 name = "clockwork-network-program"
-version = "2.0.17"
+version = "2.0.15"
 dependencies = [
  "anchor-lang",
  "anchor-spl",
- "clockwork-utils 2.0.17",
- "winnow",
+ "clockwork-utils 2.0.15",
 ]
 
 [[package]]
@@ -796,7 +795,7 @@ checksum = "fb4c9b8d7d8bd161de660ea1589e9ad2df8de616ee22c3744865f6734bc514d7"
 dependencies = [
  "anchor-lang",
  "anchor-spl",
- "clockwork-utils 2.0.17 (registry+https://github.com/rust-lang/crates.io-index)",
+ "clockwork-utils 2.0.17",
  "winnow",
 ]
 
@@ -808,22 +807,21 @@ checksum = "a3d06d1254c958998ac5fee261af453f8d7d576b1b4892a8baaaf680927e73b6"
 dependencies = [
  "anchor-lang",
  "chrono",
- "clockwork-thread-program 2.0.17 (registry+https://github.com/rust-lang/crates.io-index)",
+ "clockwork-thread-program 2.0.17",
  "nom",
  "once_cell",
 ]
 
 [[package]]
 name = "clockwork-thread-program"
-version = "2.0.17"
+version = "2.0.15"
 dependencies = [
  "anchor-lang",
  "chrono",
- "clockwork-cron 2.0.17",
- "clockwork-network-program 2.0.17",
+ "clockwork-cron 2.0.15",
+ "clockwork-network-program 2.0.15",
  "clockwork-thread-program-v1 1.4.4",
- "clockwork-utils 2.0.17",
- "pyth-sdk-solana",
+ "clockwork-utils 2.0.15",
  "static-pubkey",
  "version",
 ]
@@ -836,10 +834,10 @@ checksum = "e4126682148ef50befd5d4c974b410e8b9cf33e151ac179895e070b317eddc88"
 dependencies = [
  "anchor-lang",
  "chrono",
- "clockwork-cron 2.0.17 (registry+https://github.com/rust-lang/crates.io-index)",
- "clockwork-network-program 2.0.17 (registry+https://github.com/rust-lang/crates.io-index)",
+ "clockwork-cron 2.0.17",
+ "clockwork-network-program 2.0.17",
  "clockwork-thread-program-v1 1.4.4 (registry+https://github.com/rust-lang/crates.io-index)",
- "clockwork-utils 2.0.17 (registry+https://github.com/rust-lang/crates.io-index)",
+ "clockwork-utils 2.0.17",
  "pyth-sdk-solana",
  "static-pubkey",
  "version",
@@ -865,7 +863,7 @@ dependencies = [
 
 [[package]]
 name = "clockwork-utils"
-version = "2.0.17"
+version = "2.0.15"
 dependencies = [
  "anchor-lang",
  "base64 0.13.1",

@@ -6,64 +6,31 @@ use client::*;
 use {
     anchor_lang::{
         prelude::*,
-        solana_program::{
-            instruction::Instruction,
-            system_program,
-        },
-        InstructionData,
-        ToAccountMetas,
+        solana_program::{instruction::Instruction, system_program},
+        InstructionData, ToAccountMetas,
     },
     anyhow::Result,
     bincode::serialize,
-    clockwork_thread_program::state::{
-        LookupTables,
-        Thread,
-        Trigger,
-        PAYER_PUBKEY,
-    },
+    clockwork_thread_program::state::{LookupTables, Thread, Trigger, PAYER_PUBKEY},
     serde_json::json,
     solana_address_lookup_table_program::{
-        instruction::{
-            create_lookup_table,
-            extend_lookup_table,
-        },
+        instruction::{create_lookup_table, extend_lookup_table},
         state::AddressLookupTable,
     },
-    solana_client::{
-        rpc_config::RpcSendTransactionConfig,
-        rpc_request::RpcRequest,
-    },
+    solana_client::{rpc_config::RpcSendTransactionConfig, rpc_request::RpcRequest},
     solana_sdk::{
         address_lookup_table_account::AddressLookupTableAccount,
-        commitment_config::{
-            CommitmentConfig,
-            CommitmentLevel,
-        },
-        message::{
-            v0,
-            VersionedMessage,
-        },
+        commitment_config::{CommitmentConfig, CommitmentLevel},
+        message::{v0, VersionedMessage},
         native_token::LAMPORTS_PER_SOL,
-        signature::{
-            read_keypair_file,
-            Keypair,
-            Signature,
-            Signer,
-        },
+        signature::{read_keypair_file, Keypair, Signature, Signer},
         signers::Signers,
         slot_history::Slot,
         system_instruction,
-        transaction::{
-            Transaction,
-            VersionedTransaction,
-        },
+        transaction::{Transaction, VersionedTransaction},
     },
     solana_transaction_status::UiTransactionEncoding,
-    std::{
-        str::FromStr,
-        thread,
-        time,
-    },
+    std::{str::FromStr, thread, time},
 };
 
 fn main() -> Result<()> {
@@ -73,6 +40,7 @@ fn main() -> Result<()> {
         Pubkey::from_str("GuJVu6wky7zeVaPkGaasC5vx1eVoiySbEv7UFKZAu837").unwrap();
     client.airdrop(&app_localnet_simul_pk, LAMPORTS_PER_SOL)?;
 
+    // create a lookup table
     println!("Create the address lookup table");
     let recent_slot = client
         .get_slot_with_commitment(CommitmentConfig::finalized())
@@ -93,77 +61,65 @@ fn main() -> Result<()> {
         ))
         .unwrap();
 
-    // Our Target ixs
+    // create the instructions to give to the thread and 
+    // extend the lookup table we created with accounts to be used 
+    // by the instructions supplied to the thread
+    let mut ixs = Vec::new();
     let mut keys: Vec<Pubkey> = Vec::new();
-    for _ in 0..30 {
+    keys.extend([system_program::ID, clockwork_thread_program::ID]);
+    for i in 0..7 {
         let kp = Keypair::new();
-        keys.push(kp.pubkey()); 
+        let target_ix =
+            system_instruction::transfer(&PAYER_PUBKEY, &kp.pubkey(), LAMPORTS_PER_SOL / 100);
+        keys.push(kp.pubkey());
+        ixs.push(target_ix);
     }
-
-
-    let target_ix = Instruction {
-        program_id: lookup_tables::ID,
-        accounts: vec![],
-        data: lookup_tables::instruction::Dump{}.data()
-    };
-
-
-    //println!("thread {:#?}", thread);
-
-    println!("Loop to extend the address lookup table");
+    println!("Extend the address lookup table");
     let mut signature = Signature::default();
     let latest_blockhash = client.get_latest_blockhash().unwrap();
-    for keys in keys.chunks(20) {
-        let extend_ix = solana_address_lookup_table_program::instruction::extend_lookup_table(
-            lut,
-            lut_auth,
-            Some(client.payer_pubkey()),
-            keys.into(),
-        );
-
-        signature = client
-            .send_and_confirm_transaction(&Transaction::new_signed_with_payer(
-                &[extend_ix],
-                Some(&client.payer_pubkey()),
-                &[&client.payer],
-                latest_blockhash,
-            ))
-            .unwrap();
-    }
-    client
-        .confirm_transaction_with_spinner(
-            &signature,
-            &latest_blockhash,
-            CommitmentConfig::finalized(),
-        )
+    println!("keys: {:?}", keys);
+    let extend_ix = solana_address_lookup_table_program::instruction::extend_lookup_table(
+        lut,
+        lut_auth,
+        Some(client.payer_pubkey()),
+        keys.into(),
+    );
+    signature = client
+        .send_and_confirm_transaction(&Transaction::new_signed_with_payer(
+            &[extend_ix],
+            Some(&client.payer_pubkey()),
+            &[&client.payer],
+            latest_blockhash,
+        ))
         .unwrap();
 
-    // Out Target ix
-    //let target_ix = system_instruction::transfer(
-    //    &client.payer_pubkey(),
-    //    &kp.pubkey(),
-    //    LAMPORTS_PER_SOL,
-    //);
+    println!("Wait some arbitrary amount of time to please the address lookup table");
+    thread::sleep(time::Duration::from_secs(10));
 
-    // Thread stuff
+    
+    // create two similar threads - one of which will use the lookup table we created   
     let ts = chrono::Local::now();
-    let thread_id = format!("{}_{}", "lutrs", ts.format("%d_%H:%M:%S"));
     let thread_auth = client.payer_pubkey();
-    let thread = Thread::pubkey(thread_auth, thread_id.clone().into());
+    // thread with lookup table
+    let thread_with_lut_id = format!("{}_{}", "with_lut", ts.format("%d_%H:%M:%S"));
+    let thread_with_lut = Thread::pubkey(thread_auth, thread_with_lut_id.clone().into());    
+    // thread without lut
+    let thread_without_lut_id = format!("{}_{}", "wo_lut", ts.format("%d_%H:%M:%S"));
+    let thread_without_lut = Thread::pubkey(thread_auth, thread_without_lut_id.clone().into());
 
-    let thread_create_ix = Instruction {
+    let thread_with_lut_create_ix = Instruction {
         program_id: clockwork_thread_program::ID,
         accounts: clockwork_thread_program::accounts::ThreadCreate {
             authority: client.payer_pubkey(),
             payer: client.payer_pubkey(),
             system_program: system_program::ID,
-            thread,
+            thread: thread_with_lut,
         }
         .to_account_metas(Some(false)),
         data: clockwork_thread_program::instruction::ThreadCreate {
             amount: LAMPORTS_PER_SOL,
-            id: thread_id.into(),
-            instructions: vec![target_ix.into()],
+            id: thread_with_lut_id.into(),
+            instructions: ixs.iter().map(|e| e.clone().into()).collect(),
             trigger: Trigger::Cron {
                 schedule: "*/10 * * * * * *".into(),
                 skippable: true,
@@ -171,17 +127,39 @@ fn main() -> Result<()> {
         }
         .data(),
     };
-    println!("thread {:#?}", thread);
+    println!("thread with lookup table: {:#?}", thread_with_lut);
+
+    let thread_without_lut_create_ix = Instruction {
+        program_id: clockwork_thread_program::ID,
+        accounts: clockwork_thread_program::accounts::ThreadCreate {
+            authority: client.payer_pubkey(),
+            payer: client.payer_pubkey(),
+            system_program: system_program::ID,
+            thread: thread_without_lut,
+        }
+        .to_account_metas(Some(false)),
+        data: clockwork_thread_program::instruction::ThreadCreate {
+            amount: LAMPORTS_PER_SOL,
+            id: thread_without_lut_id.into(),
+            instructions: ixs.iter().map(|e| e.clone().into()).collect(),
+            trigger: Trigger::Cron {
+                schedule: "*/10 * * * * * *".into(),
+                skippable: true,
+            },
+        }
+        .data(),
+    };
+    println!("thread without lookup table: {:#?}", thread_without_lut);
 
     // Add LookupTables to Thread
-    let thread_lut = LookupTables::pubkey(thread_auth, thread);
-    let create_thread_lut_ix = Instruction {
+    let thread_lut = LookupTables::pubkey(thread_auth, thread_with_lut);
+    let thread_lut_create_ix = Instruction {
         program_id: clockwork_thread_program::ID,
         accounts: clockwork_thread_program::accounts::LookupTablesCreate {
             authority: client.payer_pubkey(),
             payer: client.payer_pubkey(),
             system_program: system_program::ID,
-            thread,
+            thread: thread_with_lut,
             lookup_tables: thread_lut,
         }
         .to_account_metas(Some(false)),
@@ -191,114 +169,44 @@ fn main() -> Result<()> {
         .data(),
     };
 
-    let ixs = [thread_create_ix, create_thread_lut_ix];
-    let sig = client.send_and_confirm(&ixs, &[&client.payer])?;
+    let create_thread_with_lut_ixs = [thread_with_lut_create_ix, thread_lut_create_ix];
+    let create_thread_without_lut_ix = [thread_without_lut_create_ix];
+
+    let mut signers = vec![&client.payer];
+
+    // create threads
+    signature = client
+        .send_and_confirm_transaction(&Transaction::new_signed_with_payer(
+            &create_thread_with_lut_ixs,
+            Some(&client.payer_pubkey()),
+            &[&client.payer],
+            latest_blockhash,
+        ))
+        .unwrap();
+    println!("thread with lut created: https://explorer.solana.com/tx/{}?cluster=custom&customUrl=http%3A%2F%2Flocalhost%3A8899", signature);
+    signature = client
+        .send_and_confirm_transaction(&Transaction::new_signed_with_payer(
+            &create_thread_without_lut_ix,
+            Some(&client.payer_pubkey()),
+            &[&client.payer],
+            latest_blockhash,
+        ))
+        .unwrap();
+    println!("thread w/o lut created: https://explorer.solana.com/tx/{}?cluster=custom&customUrl=http%3A%2F%2Flocalhost%3A8899", signature);
+
+    print!("Waiting for threads to execute...");
+    // we assume each thread should have executed at least once by 30 sec with 10 sec trigger
+    thread::sleep(time::Duration::from_secs(30));
+
+    // get latest signature for each thread
+    let thread_with_lut_sig = client.get_signatures_for_address(&thread_with_lut)?[0].signature.clone();
+    let thread_without_lut_sig = client.get_signatures_for_address(&thread_without_lut)?[0].signature.clone();
+
+    // inspect each signature in the explorer
+    println!("Inspect thread with lut latest sig: https://explorer.solana.com/tx/{thread_with_lut_sig}/inspect?cluster=custom&customUrl=http%3A%2F%2Flocalhost%3A8899");
+    println!("Inspect thread without lut latest sig: https://explorer.solana.com/tx/{thread_without_lut_sig}/inspect?cluster=custom&customUrl=http%3A%2F%2Flocalhost%3A8899");
+
     Ok(())
-    //println!("✍️s: https://explorer.solana.com/tx/{}?cluster=custom&customUrl=http%3A%2F%2Flocalhost%3A8899", sig);
-
-    //println!("Create signed legacy tx");
-    //let mut signers = vec![&client.payer];
-    //let tx = Transaction::new_signed_with_payer(
-    //    &ixs,
-    //    Some(&client.payer_pubkey()),
-    //    &signers,
-    //    latest_blockhash,
-    //);
-    //let serialized_tx = serialize(&tx).unwrap();
-    //println!("This legacy serialized tx is {} bytes", serialized_tx.len());
-
-    //println!("Wait some arbitrary amount of time to please the address lookup table");
-    //thread::sleep(time::Duration::from_secs(3));
-
-    //println!("Create versioned tx");
-    //let versioned_tx = create_tx_with_address_table_lookup(&client, &ixs, lut, &signers).unwrap();
-    //let serialized_versioned_tx = serialize(&versioned_tx).unwrap();
-    //println!(
-    //    "The serialized versioned tx is {} bytes",
-    //    serialized_versioned_tx.len()
-    //);
-    //let serialized_encoded = base64::encode(serialized_versioned_tx);
-    //let config = RpcSendTransactionConfig {
-    //    skip_preflight: false,
-    //    preflight_commitment: Some(CommitmentLevel::Processed),
-    //    encoding: Some(UiTransactionEncoding::Base64),
-    //    ..RpcSendTransactionConfig::default()
-    //};
-
-    //let signature = client
-    //    .send::<String>(
-    //        RpcRequest::SendTransaction,
-    //        json!([serialized_encoded, config]),
-    //    )
-    //    .unwrap();
-    //println!("✍️s: https://explorer.solana.com/tx/{}?cluster=custom&customUrl=http%3A%2F%2Flocalhost%3A8899", signature);
-    //client
-    //    .confirm_transaction_with_commitment(
-    //        &Signature::from_str(&signature).unwrap(),
-    //        CommitmentConfig::finalized(),
-    //    )
-    //    .unwrap();
-
-    //thread::sleep(time::Duration::from_secs(2)); // Not sure why this is required while commitments are compatible
-
-    //// We craft our own getTransaction as RpcClient doesn't support v0
-    //let rqclient = reqwest::blocking::Client::new();
-    //let res = rqclient
-    //    .post("http://localhost:8899/")
-    //    .json(&json!({
-    //        "jsonrpc": "2.0",
-    //        "id": 1,
-    //        "method": "getTransaction",
-    //        "params": [
-    //            signature,
-    //            {"encoding": "json", "commitment": "confirmed", "maxSupportedTransactionVersion": 0}
-    //        ]
-    //    }))
-    //    .send()
-    //    .unwrap();
-    //println!("{:?}", res.text().unwrap());
-
-    //let raw_account = client.get_account(&lut)?;
-    //let address_lookup_table = AddressLookupTable::deserialize(&raw_account.data)?;
-    //let addresses = address_lookup_table.addresses;
-    //println!("keys: {:#?}", keys);
-    //println!("lut: {}", lut);
-    //println!("{:#?}", addresses);
-    //let latest_blockhash = client.get_latest_blockhash().unwrap();
-    //for k in addresses.as_ref().iter() {
-    //    let bal = client.get_balance(k)?;
-    //    println!("{}: {}", k, bal);
-    //}
-
-    //Ok(())
-}
-
-fn create_tx_with_address_table_lookup<T: Signers>(
-    client: &Client,
-    instructions: &[Instruction],
-    address_lookup_table_key: Pubkey,
-    signers: &T,
-) -> Result<VersionedTransaction> {
-    let raw_account = client.get_account(&address_lookup_table_key)?;
-    let address_lookup_table = AddressLookupTable::deserialize(&raw_account.data)?;
-    let address_lookup_table_account = AddressLookupTableAccount {
-        key: address_lookup_table_key,
-        addresses: address_lookup_table.addresses.to_vec(),
-    };
-
-    let blockhash = client.get_latest_blockhash()?;
-    let tx = VersionedTransaction::try_new(
-        VersionedMessage::V0(v0::Message::try_compile(
-            &client.payer_pubkey(),
-            instructions,
-            &[address_lookup_table_account],
-            blockhash,
-        )?),
-        signers,
-    )?;
-
-    assert!(!tx.message.address_table_lookups().unwrap().is_empty());
-    Ok(tx)
 }
 
 fn default_client() -> Client {
