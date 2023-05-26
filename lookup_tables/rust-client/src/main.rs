@@ -2,6 +2,7 @@
 
 mod client;
 use client::*;
+use solana_sdk::compute_budget::{self, ComputeBudgetInstruction};
 
 use {
     anchor_lang::{
@@ -38,7 +39,7 @@ fn main() -> Result<()> {
     let client = default_client();
     let app_localnet_simul_pk =
         Pubkey::from_str("GuJVu6wky7zeVaPkGaasC5vx1eVoiySbEv7UFKZAu837").unwrap();
-    client.airdrop(&app_localnet_simul_pk, LAMPORTS_PER_SOL)?;
+    client.airdrop(&app_localnet_simul_pk, LAMPORTS_PER_SOL * 10)?;
 
     // create a lookup table
     println!("Create the address lookup table");
@@ -61,13 +62,15 @@ fn main() -> Result<()> {
         ))
         .unwrap();
 
-    // create the instructions to give to the thread and 
-    // extend the lookup table we created with accounts to be used 
+    // create the instructions to give to the thread and
+    // extend the lookup table we created with accounts to be used
     // by the instructions supplied to the thread
     let mut ixs = Vec::new();
     let mut keys: Vec<Pubkey> = Vec::new();
-    keys.extend([system_program::ID, clockwork_thread_program::ID]);
-    for i in 0..7 {
+    keys.extend([system_program::ID, clockwork_thread_program::ID, compute_budget::ID]);
+    // keys.extend([system_program::ID]);
+    
+    for i in 0..40 {
         let kp = Keypair::new();
         let target_ix =
             system_instruction::transfer(&PAYER_PUBKEY, &kp.pubkey(), LAMPORTS_PER_SOL / 100);
@@ -78,35 +81,40 @@ fn main() -> Result<()> {
     let mut signature = Signature::default();
     let latest_blockhash = client.get_latest_blockhash().unwrap();
     println!("keys: {:?}", keys);
-    let extend_ix = solana_address_lookup_table_program::instruction::extend_lookup_table(
-        lut,
-        lut_auth,
-        Some(client.payer_pubkey()),
-        keys.into(),
-    );
-    signature = client
-        .send_and_confirm_transaction(&Transaction::new_signed_with_payer(
-            &[extend_ix],
-            Some(&client.payer_pubkey()),
-            &[&client.payer],
-            latest_blockhash,
-        ))
-        .unwrap();
+
+    for keys in keys.chunks(20) {
+        println!("keys: {:?}", keys);
+        let extend_ix = solana_address_lookup_table_program::instruction::extend_lookup_table(
+            lut,
+            lut_auth,
+            Some(client.payer_pubkey()),
+            keys.into(),
+        );
+
+        signature = client
+            .send_and_confirm_transaction(&Transaction::new_signed_with_payer(
+                &[extend_ix],
+                Some(&client.payer_pubkey()),
+                &[&client.payer],
+                latest_blockhash,
+            ))
+            .unwrap();
+    }
 
     println!("Wait some arbitrary amount of time to please the address lookup table");
     thread::sleep(time::Duration::from_secs(10));
 
-    
-    // create two similar threads - one of which will use the lookup table we created   
+    // create two similar threads - one of which will use the lookup table we created
     let ts = chrono::Local::now();
     let thread_auth = client.payer_pubkey();
     // thread with lookup table
     let thread_with_lut_id = format!("{}_{}", "with_lut", ts.format("%d_%H:%M:%S"));
-    let thread_with_lut = Thread::pubkey(thread_auth, thread_with_lut_id.clone().into());    
+    let thread_with_lut = Thread::pubkey(thread_auth, thread_with_lut_id.clone().into());
     // thread without lut
     let thread_without_lut_id = format!("{}_{}", "wo_lut", ts.format("%d_%H:%M:%S"));
     let thread_without_lut = Thread::pubkey(thread_auth, thread_without_lut_id.clone().into());
 
+    // add first ix to thread
     let thread_with_lut_create_ix = Instruction {
         program_id: clockwork_thread_program::ID,
         accounts: clockwork_thread_program::accounts::ThreadCreate {
@@ -117,9 +125,10 @@ fn main() -> Result<()> {
         }
         .to_account_metas(Some(false)),
         data: clockwork_thread_program::instruction::ThreadCreate {
-            amount: LAMPORTS_PER_SOL,
+            amount: LAMPORTS_PER_SOL * 3,
             id: thread_with_lut_id.into(),
-            instructions: ixs.iter().map(|e| e.clone().into()).collect(),
+            instructions: vec![ixs[0].clone().into()],
+            // instructions: ixs.iter().map(|e| e.clone().into()).collect(),
             trigger: Trigger::Cron {
                 schedule: "*/10 * * * * * *".into(),
                 skippable: true,
@@ -139,9 +148,10 @@ fn main() -> Result<()> {
         }
         .to_account_metas(Some(false)),
         data: clockwork_thread_program::instruction::ThreadCreate {
-            amount: LAMPORTS_PER_SOL,
+            amount: LAMPORTS_PER_SOL*3,
             id: thread_without_lut_id.into(),
-            instructions: ixs.iter().map(|e| e.clone().into()).collect(),
+            instructions: vec![ixs[0].clone().into()],
+            // instructions: ixs.iter().map(|e| e.clone().into()).collect(),
             trigger: Trigger::Cron {
                 schedule: "*/10 * * * * * *".into(),
                 skippable: true,
@@ -194,13 +204,75 @@ fn main() -> Result<()> {
         .unwrap();
     println!("thread w/o lut created: https://explorer.solana.com/tx/{}?cluster=custom&customUrl=http%3A%2F%2Flocalhost%3A8899", signature);
 
+    // add more instructions to the thread
+    // 33 ixs too big for Thread Account, cannot allocate more memory
+    // 23 ixs exaust 1.4m compute units for thread with lut - 22 ixs - 825 bytes, 1.385m compute units
+    // 17 ixs exceeds max tx size (1232 bytes) for thread without lut - 16 ixs - 1198 bytes
+    for i in 1..22 {
+        let thread_with_lut_add_ix = Instruction {
+            program_id: clockwork_thread_program::ID,
+            accounts: clockwork_thread_program::accounts::ThreadInstructionAdd {
+                authority: client.payer_pubkey(),
+                // payer: client.payer_pubkey(),
+                system_program: system_program::ID,
+                thread: thread_with_lut,
+            }
+            .to_account_metas(Some(false)),
+            data: clockwork_thread_program::instruction::ThreadInstructionAdd {
+                instruction: ixs[i].clone().into(),
+            }
+            .data(),
+        };
+
+        let thread_without_lut_add_ix = Instruction {
+            program_id: clockwork_thread_program::ID,
+            accounts: clockwork_thread_program::accounts::ThreadInstructionAdd {
+                authority: client.payer_pubkey(),
+                // payer: client.payer_pubkey(),
+                system_program: system_program::ID,
+                thread: thread_without_lut,
+            }
+            .to_account_metas(None),
+            data: clockwork_thread_program::instruction::ThreadInstructionAdd {
+                instruction: ixs[i].clone().into(),
+            }
+            .data(),
+        };
+
+        if i < 16 {
+            println!("adding instruction {} to threads...", i+1);
+            signature = client
+                .send_and_confirm_transaction(&Transaction::new_signed_with_payer(
+                    &[thread_with_lut_add_ix, thread_without_lut_add_ix],
+                    Some(&client.payer_pubkey()),
+                    &[&client.payer],
+                    latest_blockhash,
+                ))
+                .unwrap();
+        } else {
+            println!("adding instruction {} to thread with lut...", i+1);
+            signature = client
+                .send_and_confirm_transaction(&Transaction::new_signed_with_payer(
+                    &[thread_with_lut_add_ix],
+                    Some(&client.payer_pubkey()),
+                    &[&client.payer],
+                    latest_blockhash,
+                ))
+                .unwrap();
+        }
+    }
+
     print!("Waiting for threads to execute...");
-    // we assume each thread should have executed at least once by 30 sec with 10 sec trigger
-    thread::sleep(time::Duration::from_secs(30));
+    // some time for thread to settle and start executing transactions
+    thread::sleep(time::Duration::from_secs(40));
 
     // get latest signature for each thread
-    let thread_with_lut_sig = client.get_signatures_for_address(&thread_with_lut)?[0].signature.clone();
-    let thread_without_lut_sig = client.get_signatures_for_address(&thread_without_lut)?[0].signature.clone();
+    let thread_with_lut_sig = client.get_signatures_for_address(&thread_with_lut)?[0]
+        .signature
+        .clone();
+    let thread_without_lut_sig = client.get_signatures_for_address(&thread_without_lut)?[0]
+        .signature
+        .clone();
 
     // inspect each signature in the explorer
     println!("Inspect thread with lut latest sig: https://explorer.solana.com/tx/{thread_with_lut_sig}/inspect?cluster=custom&customUrl=http%3A%2F%2Flocalhost%3A8899");
